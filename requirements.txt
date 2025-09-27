@@ -1,0 +1,31 @@
+# VisionMate - Blind Navigation Assistant
+# Core dependencies for Snapdragon Multiverse Hackathon
+
+# Computer Vision and AI
+opencv-python>=4.8.0
+ultralytics>=8.0.0
+easyocr>=1.7.0
+onnxruntime>=1.15.0
+
+# Snapdragon QNN Support (install on Snapdragon laptop)
+# onnxruntime-qnn>=1.15.0
+
+# Text-to-Speech
+pyttsx3>=2.90
+
+# WebSocket and HTTP
+websockets>=11.0.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+requests>=2.31.0
+
+# Utilities
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# Development and Testing (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# PyInstaller for Windows builds (optional)
+# pyinstaller>=5.13.0

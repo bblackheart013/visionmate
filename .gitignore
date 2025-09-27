@@ -1,0 +1,87 @@
+# VisionMate - Git Ignore Patterns
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Model files (large)
+models/*.onnx
+models/*.pt
+models/*.pth
+models/*.bin
+
+# Video files (large)
+samples/*.mp4
+samples/*.avi
+samples/*.mov
+samples/*.mkv
+
+# Performance logs
+benchmark_results/
+performance_logs/
+
+# Configuration files with secrets
+config.ini
+secrets.json
+.env
+
+# Test outputs
+test_outputs/
+screenshots/
+recordings/

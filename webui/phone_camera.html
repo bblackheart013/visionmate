@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VisionMate Phone Camera</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        
+        .camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 350px;
+            margin: 0 auto 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        #video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .btn-start {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-stop {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-disabled {
+            background: #6c757d;
+            color: white;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            text-align: center;
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.streaming {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .connection-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .connection-info strong {
+            color: #333;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .stat-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 VisionMate Phone Camera</h1>
+        
+        <div id="status" class="status disconnected">
+            Not Connected
+        </div>
+        
+        <div class="camera-container">
+            <video id="video" autoplay muted playsinline></video>
+        </div>
+        
+        <div class="controls">
+            <div class="camera-selection" style="display: flex; gap: 20px; justify-content: center; margin-bottom: 15px;">
+                <label style="display: flex; align-items: center; gap: 5px; font-weight: bold;">
+                    <input type="radio" name="camera" value="user" checked> 📱 Front Camera
+                </label>
+                <label style="display: flex; align-items: center; gap: 5px; font-weight: bold;">
+                    <input type="radio" name="camera" value="environment"> 📷 Back Camera
+                </label>
+            </div>
+            <button id="startBtn" class="btn-start" onclick="startStreaming()">
+                📹 Start Camera Stream
+            </button>
+            <button id="stopBtn" class="btn-stop btn-disabled" onclick="stopStreaming()" disabled>
+                ⏹️ Stop Stream
+            </button>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="fpsCounter">0</div>
+                <div class="stat-label">FPS</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="frameCounter">0</div>
+                <div class="stat-label">Frames Sent</div>
+            </div>
+        </div>
+        
+        <div class="connection-info">
+            <strong>Connection:</strong><br>
+            <span id="connectionInfo">Connecting...</span>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+    </div>
+
+    <script>
+        // Configuration
+        const laptopIP = '10.25.14.107'; // Hardcoded to ensure correct connection
+        // Use secure WebSocket (wss://) when accessing via HTTPS
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const streamUrl = `${protocol}${laptopIP}:8766`;
+        const controlUrl = `${protocol}${laptopIP}:8765`;
+        
+        // State
+        let websocket = null;
+        let controlWebsocket = null;
+        let streamActive = false;
+        let mediaStream = null;
+        let frameCounter = 0;
+        let fpsCounter = 0;
+        let lastFpsTime = 0;
+        
+        // DOM elements
+        const video = document.getElementById('video');
+        const status = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const connectionInfo = document.getElementById('connectionInfo');
+        const fpsCounterEl = document.getElementById('fpsCounter');
+        const frameCounterEl = document.getElementById('frameCounter');
+        const errorEl = document.getElementById('error');
+        
+        function updateStatus(message, className) {
+            status.textContent = message;
+            status.className = `status ${className}`;
+        }
+        
+        function showError(message) {
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+            setTimeout(() => {
+                errorEl.style.display = 'none';
+            }, 5000);
+        }
+        
+        function updateStats() {
+            fpsCounterEl.textContent = fpsCounter;
+            frameCounterEl.textContent = frameCounter;
+        }
+        
+        async function connectToLaptop() {
+            try {
+                updateStatus('Connecting to laptop...', 'disconnected');
+                connectionInfo.textContent = `Connecting to ${streamUrl}...`;
+                
+                websocket = new WebSocket(streamUrl);
+                
+                websocket.onopen = function(event) {
+                    updateStatus('Connected - Ready to Stream', 'connected');
+                    connectionInfo.textContent = `Connected to ${streamUrl}`;
+                    startBtn.disabled = false;
+                };
+                
+                websocket.onmessage = function(event) {
+                    try {
+                        const response = JSON.parse(event.data);
+                        if (response.type === 'ack') {
+                            fpsCounter++;
+                        }
+                    } catch (e) {
+                        console.log('Received non-JSON message:', event.data);
+                    }
+                };
+                
+                websocket.onclose = function(event) {
+                    updateStatus('Disconnected', 'disconnected');
+                    connectionInfo.textContent = 'Disconnected';
+                    startBtn.disabled = true;
+                    stopBtn.disabled = true;
+                    stopStreaming();
+                };
+                
+                websocket.onerror = function(error) {
+                    console.log('WebSocket error:', error);
+                    // Don't show error for SSL certificate issues - they're expected with self-signed certs
+                    if (websocket.readyState === WebSocket.CONNECTING) {
+                        updateStatus('Connecting... (SSL Certificate)', 'connecting');
+                    } else {
+                        showError('Connection failed. Make sure VisionMate is running on laptop.');
+                        updateStatus('Connection Error', 'disconnected');
+                    }
+                };
+                
+            } catch (error) {
+                showError(`Connection error: ${error.message}`);
+                updateStatus('Connection Failed', 'disconnected');
+            }
+        }
+        
+        async function startStreaming() {
+            try {
+                // Check if getUserMedia is available
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('Camera API not available. Please use HTTPS or a modern browser.');
+                }
+                
+                // Check if we're on HTTPS or localhost
+                const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+                if (!isSecure) {
+                    throw new Error('Camera requires HTTPS or localhost. Please use: https://' + location.hostname + ':8000/phone_camera.html');
+                }
+                
+                // Get selected camera
+                const selectedCamera = document.querySelector('input[name="camera"]:checked').value;
+                
+                // Get camera access with proper constraints
+                const constraints = {
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        frameRate: { ideal: 30 }
+                    }
+                };
+                
+                // Add facing mode only if specified
+                if (selectedCamera === 'user' || selectedCamera === 'environment') {
+                    constraints.video.facingMode = selectedCamera;
+                }
+                
+                console.log('Requesting camera with constraints:', constraints);
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                console.log('Camera access granted:', mediaStream);
+                
+                video.srcObject = mediaStream;
+                streamActive = true;
+                
+                updateStatus('Streaming to VisionMate', 'streaming');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                // Start sending frames
+                sendFrames();
+                
+            } catch (error) {
+                let errorMessage = error.message;
+                
+                if (error.name === 'NotAllowedError') {
+                    errorMessage = 'Camera access denied. Please allow camera access and try again.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage = 'No camera found. Please connect a camera and try again.';
+                } else if (error.name === 'NotSupportedError') {
+                    errorMessage = 'Camera not supported. Please use a modern browser.';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage = 'Camera is already in use by another application.';
+                }
+                
+                showError(errorMessage);
+                console.error('Camera error:', error);
+            }
+        }
+        
+        function stopStreaming() {
+            streamActive = false;
+            
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            
+            video.srcObject = null;
+            
+            updateStatus('Connected - Ready to Stream', 'connected');
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+        
+        function sendFrames() {
+            if (!streamActive || !websocket || websocket.readyState !== WebSocket.OPEN) {
+                return;
+            }
+            
+            // Create canvas to capture frame
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            
+            // Draw current video frame
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Convert to base64
+            const frameData = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+            
+            // Send to laptop
+            const message = {
+                type: 'frame',
+                data: frameData,
+                frame_id: frameCounter++,
+                timestamp: Date.now(),
+                resolution: {
+                    width: canvas.width,
+                    height: canvas.height
+                }
+            };
+            
+            try {
+                websocket.send(JSON.stringify(message));
+            } catch (error) {
+                console.error('Failed to send frame:', error);
+                stopStreaming();
+            }
+            
+            // Update FPS counter every second
+            const now = Date.now();
+            if (now - lastFpsTime >= 1000) {
+                fpsCounter = Math.round((fpsCounter * 1000) / (now - lastFpsTime));
+                lastFpsTime = now;
+                updateStats();
+                fpsCounter = 0; // Reset for next second
+            }
+            
+            // Schedule next frame (aim for ~15 FPS to reduce bandwidth)
+            setTimeout(sendFrames, 67); // ~15 FPS
+        }
+        
+        // Connect to laptop on page load
+        window.addEventListener('load', function() {
+            // Check if camera API is available
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showError('Camera API not available. Please use a modern browser (Chrome, Safari, Firefox) and ensure you are on HTTPS or localhost.');
+                updateStatus('Camera API Not Available', 'disconnected');
+            } else {
+                connectToLaptop();
+                updateStats();
+                
+                // Update stats every second
+                setInterval(updateStats, 1000);
+            }
+        });
+        
+        // Handle page visibility change
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden && streamActive) {
+                // Page is hidden, pause streaming
+                console.log('Page hidden, pausing stream');
+            } else if (!document.hidden && !streamActive && websocket && websocket.readyState === WebSocket.OPEN) {
+                // Page is visible, resume streaming if was connected
+                console.log('Page visible, ready to stream');
+            }
+        });
+        
+        // Handle orientation change
+        window.addEventListener('orientationchange', function() {
+            // Small delay to allow orientation to complete
+            setTimeout(() => {
+                if (streamActive) {
+                    console.log('Orientation changed, continuing stream');
+                }
+            }, 100);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,179 @@
+{
+  "lobby_to_cafeteria": {
+    "start": "lobby",
+    "goal": "cafeteria",
+    "waypoints": [
+      {
+        "id": "start",
+        "lat": 37.7749,
+        "lon": -122.4194,
+        "name": "Main Lobby",
+        "instructions": "Begin navigation from the main lobby. Head towards the central corridor.",
+        "distance_m": 0.0,
+        "bearing_deg": 0.0
+      },
+      {
+        "id": "corridor_1",
+        "lat": 37.7750,
+        "lon": -122.4195,
+        "name": "Central Corridor",
+        "instructions": "Continue straight down the central corridor for approximately 20 meters.",
+        "distance_m": 20.0,
+        "bearing_deg": 90.0
+      },
+      {
+        "id": "intersection",
+        "lat": 37.7751,
+        "lon": -122.4196,
+        "name": "Main Intersection",
+        "instructions": "At the intersection, turn right towards the cafeteria wing.",
+        "distance_m": 40.0,
+        "bearing_deg": 180.0
+      },
+      {
+        "id": "cafeteria_wing",
+        "lat": 37.7752,
+        "lon": -122.4197,
+        "name": "Cafeteria Wing",
+        "instructions": "Continue straight down the cafeteria wing. Look for the double doors ahead.",
+        "distance_m": 60.0,
+        "bearing_deg": 180.0
+      },
+      {
+        "id": "goal",
+        "lat": 37.7753,
+        "lon": -122.4198,
+        "name": "Cafeteria Entrance",
+        "instructions": "You have arrived at the cafeteria. The entrance is straight ahead.",
+        "distance_m": 80.0,
+        "bearing_deg": 180.0
+      }
+    ]
+  },
+  "cafeteria_to_exit": {
+    "start": "cafeteria",
+    "goal": "exit",
+    "waypoints": [
+      {
+        "id": "start",
+        "lat": 37.7753,
+        "lon": -122.4198,
+        "name": "Cafeteria Entrance",
+        "instructions": "Exit the cafeteria and turn left towards the main corridor.",
+        "distance_m": 0.0,
+        "bearing_deg": 270.0
+      },
+      {
+        "id": "main_corridor",
+        "lat": 37.7752,
+        "lon": -122.4197,
+        "name": "Main Corridor",
+        "instructions": "Continue straight down the main corridor towards the building exit.",
+        "distance_m": 30.0,
+        "bearing_deg": 270.0
+      },
+      {
+        "id": "exit_doors",
+        "lat": 37.7751,
+        "lon": -122.4196,
+        "name": "Exit Doors",
+        "instructions": "The main exit doors are ahead. Proceed through the doors to exit the building.",
+        "distance_m": 60.0,
+        "bearing_deg": 270.0
+      }
+    ]
+  },
+  "lobby_to_restroom": {
+    "start": "lobby",
+    "goal": "restroom",
+    "waypoints": [
+      {
+        "id": "start",
+        "lat": 37.7749,
+        "lon": -122.4194,
+        "name": "Main Lobby",
+        "instructions": "From the main lobby, head towards the east wing.",
+        "distance_m": 0.0,
+        "bearing_deg": 45.0
+      },
+      {
+        "id": "east_wing",
+        "lat": 37.7750,
+        "lon": -122.4193,
+        "name": "East Wing",
+        "instructions": "Continue down the east wing corridor.",
+        "distance_m": 25.0,
+        "bearing_deg": 45.0
+      },
+      {
+        "id": "restroom_sign",
+        "lat": 37.7751,
+        "lon": -122.4192,
+        "name": "Restroom Sign",
+        "instructions": "Look for the restroom sign on your right. The restroom is just ahead.",
+        "distance_m": 35.0,
+        "bearing_deg": 90.0
+      },
+      {
+        "id": "goal",
+        "lat": 37.7752,
+        "lon": -122.4191,
+        "name": "Restroom Entrance",
+        "instructions": "You have arrived at the restroom entrance.",
+        "distance_m": 40.0,
+        "bearing_deg": 90.0
+      }
+    ]
+  },
+  "restroom_to_cafeteria": {
+    "start": "restroom",
+    "goal": "cafeteria",
+    "waypoints": [
+      {
+        "id": "start",
+        "lat": 37.7752,
+        "lon": -122.4191,
+        "name": "Restroom Entrance",
+        "instructions": "Exit the restroom and turn left back towards the main corridor.",
+        "distance_m": 0.0,
+        "bearing_deg": 270.0
+      },
+      {
+        "id": "main_corridor",
+        "lat": 37.7751,
+        "lon": -122.4192,
+        "name": "Main Corridor",
+        "instructions": "Continue straight down the main corridor.",
+        "distance_m": 20.0,
+        "bearing_deg": 180.0
+      },
+      {
+        "id": "intersection",
+        "lat": 37.7750,
+        "lon": -122.4193,
+        "name": "Main Intersection",
+        "instructions": "At the intersection, turn left towards the cafeteria wing.",
+        "distance_m": 40.0,
+        "bearing_deg": 270.0
+      },
+      {
+        "id": "cafeteria_wing",
+        "lat": 37.7749,
+        "lon": -122.4194,
+        "name": "Cafeteria Wing",
+        "instructions": "Continue down the cafeteria wing towards the cafeteria entrance.",
+        "distance_m": 60.0,
+        "bearing_deg": 270.0
+      },
+      {
+        "id": "goal",
+        "lat": 37.7748,
+        "lon": -122.4195,
+        "name": "Cafeteria Entrance",
+        "instructions": "You have arrived at the cafeteria entrance.",
+        "distance_m": 80.0,
+        "bearing_deg": 270.0
+      }
+    ]
+  }
+}

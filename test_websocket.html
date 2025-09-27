@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>WebSocket Connection Test</h1>
+    <div id="status">Not connected</div>
+    <button onclick="testConnection()">Test Connection</button>
+    
+    <script>
+        function testConnection() {
+            const status = document.getElementById('status');
+            const ws = new WebSocket('ws://10.25.14.107:8766');
+            
+            ws.onopen = function() {
+                status.textContent = 'Connected!';
+                status.style.color = 'green';
+            };
+            
+            ws.onerror = function(error) {
+                status.textContent = 'Connection failed: ' + error;
+                status.style.color = 'red';
+                console.error('WebSocket error:', error);
+            };
+            
+            ws.onclose = function() {
+                status.textContent = 'Connection closed';
+                status.style.color = 'orange';
+            };
+        }
+    </script>
+</body>
+</html>
