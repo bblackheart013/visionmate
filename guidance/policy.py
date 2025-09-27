@@ -12,13 +12,13 @@ Design Philosophy:
   - Human-centric: Natural, calm, reassuring voice guidance
 
 Author: Vision Accessibility Team
-Version: 1.0.0
+Version: 8.0.0 - Production Edition
 """
 
 import time
 from typing import Optional, Dict, List, Callable, Tuple, Final
 from dataclasses import dataclass
-from enum import IntEnum, auto
+from enum import IntEnum
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -28,84 +28,150 @@ from enum import IntEnum, auto
 class Priority(IntEnum):
     """Priority levels for guidance events - lower values = higher urgency."""
     IMMEDIATE_HAZARD = 1  # STOP signs
-    PERSON_PROXIMITY = 2  # People in path
+    PERSON_PROXIMITY = 2  # People in path (< 3m)
     NAVIGATION = 3        # Exits and turns  
     VEHICLE_AWARENESS = 4 # Cars, buses, trucks
     STATIC_OBSTACLE = 5   # Poles, barriers
 
 
-@dataclass(frozen=True)
-class TimingConstants:
-    """Timing parameters - carefully tuned for optimal user experience."""
-    GLOBAL_COOLDOWN: Final[float] = 2.0      # Minimum silence between any prompts
-    DEBOUNCE_WINDOW: Final[float] = 0.2      # Filter perception jitter
-    STOP_SIGN_COOLDOWN: Final[float] = 5.0   # Don't nag about same stop sign
-    NAVIGATION_COOLDOWN: Final[float] = 3.0   # Exit reminders
-    HAZARD_COOLDOWN: Final[float] = 2.0      # General obstacle cooldown
+# Timing constants
+GLOBAL_COOLDOWN: Final[float] = 2.0      # Minimum silence between any prompts
+DEBOUNCE_WINDOW: Final[float] = 0.2      # Filter perception jitter
+STOP_COOLDOWN: Final[float] = 5.0        # Don't nag about same stop sign
+NAVIGATION_COOLDOWN: Final[float] = 3.0   # Exit reminders
+HAZARD_COOLDOWN: Final[float] = 2.0      # General obstacle cooldown
+UTTERANCE_DEDUPE_COOLDOWN: Final[float] = 3.0  # Prevent exact text repetition
 
-
-@dataclass(frozen=True)
-class SpatialConstants:
-    """Spatial thresholds - based on extensive user studies."""
-    PERSON_IMMEDIATE_ZONE: Final[float] = 1.0  # Stop immediately
-    PERSON_CAUTION_ZONE: Final[float] = 2.0    # Slow down
-    PERSON_AWARENESS_ZONE: Final[float] = 3.0   # Be aware
-    POLE_DANGER_ZONE: Final[float] = 2.0       # Pole collision risk
-    
-    BEARING_STRAIGHT: Final[float] = 5.0       # ±5° is "ahead"
-    BEARING_SLIGHT: Final[float] = 20.0        # ±20° is "slightly left/right"
-
-
-# Singleton instances for efficiency
-TIMING = TimingConstants()
-SPATIAL = SpatialConstants()
+# Spatial constants
+PERSON_IMMEDIATE_ZONE: Final[float] = 1.0   # Stop immediately
+PERSON_CAUTION_ZONE: Final[float] = 2.0     # Stop and be careful
+PERSON_AWARENESS_ZONE: Final[float] = 4.0   # Be aware
+PERSON_PRIORITY_ZONE: Final[float] = 3.0    # High priority threshold
+POLE_DANGER_ZONE: Final[float] = 2.0        # Pole collision risk
+BEARING_STRAIGHT: Final[float] = 5.0        # ±5° is "ahead"
+BEARING_SLIGHT: Final[float] = 20.0         # ±20° is "slightly left/right"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # MARK: - Utility Functions
 # ═══════════════════════════════════════════════════════════════════════════
 
-def quantize_bearing(bearing_deg: float) -> str:
+def bearing_bucket(bearing_deg: float) -> str:
     """
     Transform bearing angle into natural language.
     
-    We don't say "12.7 degrees left" - we say "slightly left".
-    Humans think in qualitative terms, not numbers.
+    Returns:
+        "ahead" if |bearing| <= 5°
+        "slightly left/right" if 5° < |bearing| <= 20°
+        "to the left/right" if |bearing| > 20°
     """
     magnitude = abs(bearing_deg)
     
-    if magnitude <= SPATIAL.BEARING_STRAIGHT:
+    if magnitude <= BEARING_STRAIGHT:
         return "ahead"
     
     direction = "left" if bearing_deg < 0 else "right"
     
-    if magnitude <= SPATIAL.BEARING_SLIGHT:
+    if magnitude <= BEARING_SLIGHT:
         return f"slightly {direction}"
     else:
         return f"to the {direction}"
 
 
-def humanize_distance(meters: Optional[float]) -> str:
+def bucket_rank(bearing_text: str) -> int:
+    """
+    Rank bearing bucket informativeness.
+    
+    Returns:
+        0 for "ahead" (least informative)
+        1 for "slightly left/right" 
+        2 for "to the left/right" (most informative)
+    """
+    if "to the" in bearing_text:
+        return 2
+    elif "slightly" in bearing_text:
+        return 1
+    else:  # "ahead"
+        return 0
+
+
+def distance_phrase(meters: Optional[float]) -> str:
     """
     Convert metric distance to human-friendly phrase.
     
-    People don't process "1.7 meters" quickly under stress.
-    They understand "very close" instantly.
+    Returns:
+        "very close" if < 1.0m
+        "two meters" if 1.0-2.0m
+        "a few meters" if 2.0-4.0m
+        "" otherwise
     """
     if meters is None:
         return ""
     
-    if meters < SPATIAL.PERSON_IMMEDIATE_ZONE:
+    if meters < PERSON_IMMEDIATE_ZONE:
         return "very close"
-    elif meters <= SPATIAL.PERSON_CAUTION_ZONE:
-        return "two meters"  # Specific but simple
+    elif meters <= PERSON_CAUTION_ZONE:
+        return "two meters"
+    elif meters <= PERSON_AWARENESS_ZONE:
+        return "a few meters"
     else:
-        return "ahead"
+        return ""
+
+
+def intent_group(intent: str) -> str:
+    """
+    Map intent to its cooldown group.
+    
+    Returns:
+        "STOP" for STOP
+        "EXIT" for EXIT_*
+        "HAZARD" for OBSTACLE_*
+        "INFO" otherwise
+    """
+    if intent == "STOP":
+        return "STOP"
+    elif intent.startswith("EXIT_"):
+        return "EXIT"
+    elif intent.startswith("OBSTACLE_"):
+        return "HAZARD"
+    else:
+        return "INFO"
+
+
+def cooldown_for(group: str) -> float:
+    """
+    Get the cooldown duration for an intent group.
+    
+    Returns:
+        Cooldown duration in seconds
+    """
+    cooldowns = {
+        'STOP': STOP_COOLDOWN,
+        'EXIT': NAVIGATION_COOLDOWN,
+        'HAZARD': HAZARD_COOLDOWN,
+    }
+    return cooldowns.get(group, GLOBAL_COOLDOWN)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # MARK: - Core Policy Engine
 # ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class Candidate:
+    """Represents a potential utterance candidate with all decision factors."""
+    utterance: str
+    priority: Priority
+    confidence: float
+    bearing: float
+    bearing_text: str
+    group: str
+    intent: str
+    
+    def bearing_sign_pref(self) -> int:
+        """Return 0 for right (>=0), 1 for left (<0)."""
+        return 0 if self.bearing >= 0 else 1
+
 
 class GuidancePolicy:
     """
@@ -119,13 +185,6 @@ class GuidancePolicy:
     Every design decision here impacts real human safety.
     """
     
-    __slots__ = (
-        '_clock',
-        '_last_utterance_time', 
-        '_intent_memory',
-        '_utterance_history'
-    )
-    
     def __init__(self, now_fn: Optional[Callable[[], float]] = None):
         """
         Initialize the guidance system.
@@ -135,17 +194,25 @@ class GuidancePolicy:
         """
         self._clock = now_fn or time.monotonic
         self._last_utterance_time: float = 0.0
-        self._intent_memory: Dict[str, float] = {}
-        self._utterance_history: Dict[str, str] = {}
+        self._last_utterance_text: Optional[str] = None
+        self._last_by_group: Dict[str, float] = {}  # Group -> last time spoken
+        self._last_by_text: Dict[str, float] = {}   # Text -> last time spoken
+        self._last_stop_time: Optional[float] = None  # Dedicated STOP tracking
+    
+    def _is_urgent_person(self, event: Dict) -> bool:
+        """Check if this is a safety-critical near-range person."""
+        return event.get('intent') == 'OBSTACLE_PERSON' and \
+               (event.get('dist_m') is not None and event['dist_m'] <= PERSON_CAUTION_ZONE)
     
     def choose(self, events: List[Dict]) -> Optional[str]:
         """
         The decision point: What do we say right now?
         
-        This method is called 30+ times per second. It must be:
-        - Fast: No complex computations
-        - Deterministic: Same input → same output
-        - Safe: Never miss critical warnings
+        Process:
+        1) Check debounce and global cooldown (only after first utterance)
+        2) Build candidates from events
+        3) Filter by group and text cooldowns
+        4) Sort by priority rules and select best
         
         Args:
             events: Perception events from this video frame
@@ -155,303 +222,245 @@ class GuidancePolicy:
         """
         now = self._clock()
         
-        # Respect the silence - don't overwhelm the user
-        if not self._can_speak(now):
-            return None
+        # Check if we've spoken at least once
+        has_spoken = (self._last_utterance_text is not None)
         
-        # Analyze the scene and identify what matters
-        candidates = self._analyze_scene(events, now)
+        # Check if any event is an urgent person (safety-critical)
+        has_urgent_person = any(self._is_urgent_person(event) for event in events)
         
-        if not candidates:
-            return None  # Nothing important enough to mention
+        # Only apply debounce and global cooldown after first utterance AND if no urgent person
+        if not has_urgent_person:
+            if has_spoken and now - self._last_utterance_time < DEBOUNCE_WINDOW:
+                return None
+            if has_spoken and now - self._last_utterance_time < GLOBAL_COOLDOWN:
+                return None
         
-        # Select the most important message
-        winner = self._select_utterance(candidates)
-        
-        # Update our memory and speak
-        self._commit_utterance(winner, now)
-        
-        return winner.utterance
-    
-    def _can_speak(self, now: float) -> bool:
-        """Check if enough time has passed since last utterance."""
-        elapsed = now - self._last_utterance_time
-        return elapsed >= max(TIMING.GLOBAL_COOLDOWN, TIMING.DEBOUNCE_WINDOW)
-    
-    def _analyze_scene(self, events: List[Dict], now: float) -> List['Candidate']:
-        """
-        Transform raw perception into actionable intelligence.
-        
-        This is where computer vision meets human factors engineering.
-        """
-        candidates = []
+        # Build candidates from events
+        candidates: List[Candidate] = []
         
         for event in events:
-            # Validate data integrity
             if not self._is_valid_event(event):
                 continue
             
-            intent = event.get("intent", "")
-            
-            # Map intent to our priority system
-            priority = self._classify_priority(intent)
+            intent = event.get('intent', '')
+            priority = self._get_priority(event)
             if priority is None:
                 continue
             
-            # Check cooldowns - don't repeat ourselves
-            category = self._categorize_intent(intent)
-            if not self._cooldown_expired(category, now):
-                continue
-            
-            # Generate the actual words to speak
-            utterance = self._compose_utterance(event)
+            utterance = self._generate_utterance(event)
             if not utterance:
                 continue
             
-            # Avoid redundant repetition
-            if self._is_redundant(category, utterance, now):
-                continue
+            group = intent_group(intent)
             
             candidates.append(Candidate(
-                event=event,
                 utterance=utterance,
                 priority=priority,
-                confidence=event.get("conf", 0.0),
-                bearing=abs(event.get("bearing_deg", 0.0)),
-                category=category
+                confidence=event.get('conf', 0.0),
+                bearing=event.get('bearing_deg', 0.0),
+                bearing_text=bearing_bucket(event.get('bearing_deg', 0.0)),
+                group=group,
+                intent=intent
             ))
         
-        return candidates
-    
-    def _select_utterance(self, candidates: List['Candidate']) -> 'Candidate':
-        """
-        Choose the single most important message.
+        # Filter candidates by cooldowns
+        filtered_candidates: List[Candidate] = []
         
-        When multiple things need attention, we must prioritize.
-        The user can only process one instruction at a time.
-        """
-        # Sort by: priority → confidence → directness
-        # This ranking reflects years of user studies
-        return min(candidates, key=lambda c: (
-            c.priority,           # Safety first
-            -c.confidence,        # Trust reliable detections
-            c.bearing            # Prefer straight ahead
-        ))
-    
-    def _commit_utterance(self, candidate: 'Candidate', now: float) -> None:
-        """Record that we're speaking - update all tracking state."""
+        for candidate in candidates:
+            group = candidate.group
+            text = candidate.utterance
+            group_cd = cooldown_for(group)
+            
+            # Special handling for STOP signs - enforce extended cooldown
+            if candidate.intent == 'STOP':
+                # Check if STOP was recently announced using dedicated tracker
+                if self._last_stop_time is not None:
+                    if now - self._last_stop_time < STOP_COOLDOWN:
+                        continue  # Skip this STOP, it's still in cooldown
+            
+            # Standard per-group cooldown
+            if group in self._last_by_group:
+                if now - self._last_by_group[group] < group_cd:
+                    continue
+            
+            # Per-text cooldown: only enforce if there is a recorded time for this exact text
+            if text in self._last_by_text:
+                text_cooldown = max(group_cd, UTTERANCE_DEDUPE_COOLDOWN)
+                if now - self._last_by_text[text] < text_cooldown:
+                    continue
+            
+            filtered_candidates.append(candidate)
+        
+        if not filtered_candidates:
+            return None
+        
+        # Sort candidates by priority rules
+        # Order: priority ASC, -confidence DESC, sign_pref ASC, -bucket_rank DESC, abs(bearing) ASC
+        def sort_key(c: Candidate) -> Tuple[int, float, int, int, float]:
+            return (
+                c.priority,                         # Lower priority value = higher priority
+                -c.confidence,                      # Negative for descending sort
+                c.bearing_sign_pref(),              # 0 for right, 1 for left (prefer right)
+                -bucket_rank(c.bearing_text),       # Negative for descending (prefer informative)
+                abs(c.bearing)                      # Smaller absolute bearing is better
+            )
+        
+        filtered_candidates.sort(key=sort_key)
+        
+        # Select best candidate and update state
+        best = filtered_candidates[0]
+        
+        # Update all tracking state
         self._last_utterance_time = now
-        self._intent_memory[candidate.category] = now
-        self._utterance_history[candidate.category] = candidate.utterance
-    
-    # ─────────────────────────────────────────────────────────────────────
-    # MARK: - Intent Classification
-    # ─────────────────────────────────────────────────────────────────────
-    
-    def _classify_priority(self, intent: str) -> Optional[Priority]:
-        """Map perception intents to our priority hierarchy."""
-        mapping = {
-            "STOP": Priority.IMMEDIATE_HAZARD,
-            "OBSTACLE_PERSON": Priority.PERSON_PROXIMITY,
-            "EXIT_RIGHT": Priority.NAVIGATION,
-            "EXIT_LEFT": Priority.NAVIGATION,
-            "OBSTACLE_CAR": Priority.VEHICLE_AWARENESS,
-            "OBSTACLE_BUS": Priority.VEHICLE_AWARENESS,
-            "OBSTACLE_TRUCK": Priority.VEHICLE_AWARENESS,
-            "OBSTACLE_POLE": Priority.STATIC_OBSTACLE,
-        }
-        return mapping.get(intent)
-    
-    def _categorize_intent(self, intent: str) -> str:
-        """Group intents for cooldown management."""
-        if intent == "STOP":
-            return "STOP"
-        elif intent.startswith("EXIT_"):
-            return "NAVIGATION"
-        elif intent.startswith("OBSTACLE_"):
-            return "HAZARD"
-        return intent
-    
-    # ─────────────────────────────────────────────────────────────────────
-    # MARK: - Cooldown Management
-    # ─────────────────────────────────────────────────────────────────────
-    
-    def _cooldown_expired(self, category: str, now: float) -> bool:
-        """Check if we can speak about this category again."""
-        last_time = self._intent_memory.get(category, 0.0)
+        self._last_utterance_text = best.utterance
+        self._last_by_group[best.group] = now
+        self._last_by_text[best.utterance] = now
         
-        cooldowns = {
-            "STOP": TIMING.STOP_SIGN_COOLDOWN,
-            "NAVIGATION": TIMING.NAVIGATION_COOLDOWN,
-            "HAZARD": TIMING.HAZARD_COOLDOWN,
-        }
+        # Track STOP specifically
+        if best.intent == 'STOP':
+            self._last_stop_time = now
         
-        required_gap = cooldowns.get(category, TIMING.GLOBAL_COOLDOWN)
-        return (now - last_time) >= required_gap
+        return best.utterance
     
-    def _is_redundant(self, category: str, utterance: str, now: float) -> bool:
-        """Avoid saying the exact same thing twice."""
-        last_utterance = self._utterance_history.get(category, "")
-        if utterance != last_utterance:
-            return False
-        
-        # Even if same message, allow after cooldown expires
-        return not self._cooldown_expired(category, now)
-    
-    # ─────────────────────────────────────────────────────────────────────
-    # MARK: - Utterance Composition
-    # ─────────────────────────────────────────────────────────────────────
-    
-    def _compose_utterance(self, event: Dict) -> Optional[str]:
+    def _get_priority(self, event: Dict) -> Optional[Priority]:
         """
-        Craft the perfect phrase for this moment.
+        Determine priority for an event.
         
-        Every word is chosen carefully:
-        - Imperative mood for urgency
-        - Present tense for immediacy  
-        - Minimal syllables for processing speed
+        Special case: OBSTACLE_PERSON with dist < 3m gets high priority.
         """
-        intent = event.get("intent", "")
-        bearing = event.get("bearing_deg", 0.0)
-        distance = event.get("dist_m")
+        intent = event.get('intent', '')
         
-        # Each intent type has its own phrasing logic
-        composers = {
-            "STOP": self._compose_stop,
-            "OBSTACLE_PERSON": self._compose_person,
-            "EXIT_RIGHT": self._compose_exit,
-            "EXIT_LEFT": self._compose_exit,
-            "OBSTACLE_CAR": self._compose_vehicle,
-            "OBSTACLE_BUS": self._compose_vehicle,
-            "OBSTACLE_TRUCK": self._compose_vehicle,
-            "OBSTACLE_POLE": self._compose_pole,
-        }
+        if intent == 'STOP':
+            return Priority.IMMEDIATE_HAZARD
         
-        composer = composers.get(intent)
-        if not composer:
+        if intent == 'OBSTACLE_PERSON':
+            dist = event.get('dist_m')
+            if dist is not None and dist < PERSON_PRIORITY_ZONE:
+                return Priority.PERSON_PROXIMITY
+            return None  # Person too far or no distance
+        
+        if intent in ['EXIT_RIGHT', 'EXIT_LEFT']:
+            return Priority.NAVIGATION
+        
+        if intent in ['OBSTACLE_CAR', 'OBSTACLE_BUS', 'OBSTACLE_TRUCK']:
+            return Priority.VEHICLE_AWARENESS
+        
+        if intent == 'OBSTACLE_POLE':
+            bearing = abs(event.get('bearing_deg', 0.0))
+            dist = event.get('dist_m')
+            
+            # Must be straight ahead
+            if bearing > BEARING_STRAIGHT:
+                return None
+            
+            # Must be close if distance known
+            if dist is not None and dist >= POLE_DANGER_ZONE:
+                return None
+            
+            return Priority.STATIC_OBSTACLE
+        
+        return None
+    
+    def _generate_utterance(self, event: Dict) -> Optional[str]:
+        """Generate appropriate utterance for an event."""
+        intent = event.get('intent', '')
+        
+        if intent == 'STOP':
+            return "Stop sign ahead."
+        
+        elif intent == 'OBSTACLE_PERSON':
+            return self._generate_person_utterance(event)
+        
+        elif intent in ['EXIT_RIGHT', 'EXIT_LEFT']:
+            return self._generate_exit_utterance(event)
+        
+        elif intent in ['OBSTACLE_CAR', 'OBSTACLE_BUS', 'OBSTACLE_TRUCK']:
+            return self._generate_vehicle_utterance(event)
+        
+        elif intent == 'OBSTACLE_POLE':
+            return "Caution. Pole ahead."
+        
+        return None
+    
+    def _generate_person_utterance(self, event: Dict) -> Optional[str]:
+        """
+        Generate utterance for person obstacle.
+        
+        Format:
+        - < 1m: "Stop. Person very close."
+        - 1-2m (inclusive): "Stop. Person two meters." (with optional bearing)
+        - 2-4m: "Caution. Person ahead." (with optional bearing)
+        """
+        dist = event.get('dist_m')
+        bearing = event.get('bearing_deg', 0.0)
+        
+        if dist is None:
             return None
         
-        return composer(event)
-    
-    def _compose_stop(self, event: Dict) -> str:
-        """STOP signs are non-negotiable."""
-        return "Stop sign ahead."
-    
-    def _compose_person(self, event: Dict) -> Optional[str]:
-        """
-        People require special care - they're unpredictable.
-        
-        Distance determines urgency:
-        - Very close: Immediate stop
-        - Close: Cautious stop
-        - Nearby: Awareness
-        """
-        distance = event.get("dist_m")
-        bearing = event.get("bearing_deg", 0.0)
-        
-        # Only speak if within awareness zone
-        if distance is None or distance >= SPATIAL.PERSON_AWARENESS_ZONE:
-            return None
-        
-        # Choose urgency based on proximity
-        if distance < SPATIAL.PERSON_IMMEDIATE_ZONE:
-            base = "Stop. Person very close"
-        elif distance <= SPATIAL.PERSON_CAUTION_ZONE:
+        # Determine base phrase by distance
+        if dist < PERSON_IMMEDIATE_ZONE:  # < 1.0
+            # Very close - no bearing needed
+            return "Stop. Person very close."
+        elif dist <= PERSON_CAUTION_ZONE:  # 1.0 <= dist <= 2.0 (inclusive)
             base = "Stop. Person two meters"
-        else:
+            # Add bearing if significant
+            if abs(bearing) > BEARING_STRAIGHT:
+                bearing_text = bearing_bucket(bearing)
+                if bearing_text != "ahead":
+                    return f"{base} {bearing_text}."
+            return f"{base}."
+        elif dist <= PERSON_AWARENESS_ZONE:  # 2.0 < dist <= 4.0
+            # Always include "ahead" in base
             base = "Caution. Person ahead"
-        
-        # Add direction if not straight ahead
-        if abs(bearing) > SPATIAL.BEARING_STRAIGHT and "ahead" not in base:
-            direction = quantize_bearing(bearing)
-            return f"{base} {direction}."
-        
-        return f"{base}."
+            # Add bearing modifier if significant
+            if abs(bearing) > BEARING_STRAIGHT:
+                bearing_text = bearing_bucket(bearing)
+                if bearing_text != "ahead":
+                    # Append bearing after "ahead"
+                    return f"{base} {bearing_text}."
+            return f"{base}."
+        else:
+            return None  # Too far
     
-    def _compose_exit(self, event: Dict) -> str:
-        """Navigation guidance - help them find their way."""
-        bearing = event.get("bearing_deg", 0.0)
-        direction = quantize_bearing(bearing)
-        return f"Exit {direction}."
+    def _generate_exit_utterance(self, event: Dict) -> str:
+        """Generate utterance for exit signs."""
+        bearing = event.get('bearing_deg', 0.0)
+        bearing_text = bearing_bucket(bearing)
+        return f"Exit {bearing_text}."
     
-    def _compose_vehicle(self, event: Dict) -> str:
-        """Vehicles are large, fast, dangerous."""
-        bearing = event.get("bearing_deg", 0.0)
-        direction = quantize_bearing(bearing)
-        return f"Caution. Vehicle {direction}."
-    
-    def _compose_pole(self, event: Dict) -> Optional[str]:
-        """Static obstacles - only mention if collision likely."""
-        bearing = event.get("bearing_deg", 0.0)
-        distance = event.get("dist_m")
-        
-        # Must be straight ahead
-        if abs(bearing) > SPATIAL.BEARING_STRAIGHT:
-            return None
-        
-        # Must be close (if distance available)
-        if distance is not None and distance >= SPATIAL.POLE_DANGER_ZONE:
-            return None
-        
-        return "Caution. Pole ahead."
-    
-    # ─────────────────────────────────────────────────────────────────────
-    # MARK: - Validation
-    # ─────────────────────────────────────────────────────────────────────
+    def _generate_vehicle_utterance(self, event: Dict) -> str:
+        """Generate utterance for vehicles."""
+        bearing = event.get('bearing_deg', 0.0)
+        bearing_text = bearing_bucket(bearing)
+        return f"Caution. Vehicle {bearing_text}."
     
     def _is_valid_event(self, event: Dict) -> bool:
-        """Ensure event has required fields and valid data."""
+        """Validate event has required fields and valid data."""
         if not isinstance(event, dict):
             return False
         
-        # Required fields
-        if "intent" not in event or "conf" not in event:
+        if 'intent' not in event:
             return False
         
-        # Confidence must be positive
-        if event.get("conf", 0) <= 0:
+        conf = event.get('conf', 0)
+        if conf <= 0:
             return False
         
         return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# MARK: - Internal Data Structures
-# ═══════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class Candidate:
-    """
-    A potential utterance candidate.
-    
-    Immutable by design - represents a snapshot of decision factors.
-    """
-    event: Dict
-    utterance: str
-    priority: Priority
-    confidence: float
-    bearing: float
-    category: str
-    
-    def __repr__(self) -> str:
-        return f"Candidate('{self.utterance}', pri={self.priority}, conf={self.confidence:.2f})"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # MARK: - Public API
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Export these for external use
-bearing_bucket = quantize_bearing
-distance_phrase = humanize_distance
-
 __all__ = [
     'GuidancePolicy',
-    'bearing_bucket', 
+    'bearing_bucket',
+    'bucket_rank',
     'distance_phrase',
+    'intent_group',
+    'cooldown_for',
     'Priority',
-    'TimingConstants',
-    'SpatialConstants',
 ]
 
 
