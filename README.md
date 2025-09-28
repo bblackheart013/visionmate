@@ -8,7 +8,6 @@ Team VisionMate - *Princeton University, September 27-28, 2025*
 "The whole is greater than the sum of its parts." - Aristotle
 Orchestrating perception, voice, and vision into a unified accessibility experience
 
-🚀 30-Second Demo
 bash
 # Clone and run immediately
 git clone https://github.com/bblackheart013/visionmate
