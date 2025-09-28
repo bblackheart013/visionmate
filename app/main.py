@@ -25,8 +25,9 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from perception import PerceptionPipeline
+    from perception import PerceptionPipeline, PerceptionConfig
     PERCEPTION_AVAILABLE = True
+    print("Person 1's PerceptionPipeline available")
 except ImportError as e:
     print(f"Warning: {e}. Running with mock perception for testing.")
     PERCEPTION_AVAILABLE = False
@@ -35,6 +36,7 @@ from app.perf import Timer, perf_line
 from app.ws_server import start_websocket_server_thread, get_controller_state
 from app.phone_stream_server import start_phone_stream_server_thread, get_phone_stream_receiver
 from app.route_client import get_route, RouteClient
+from app.enhanced_guidance import EnhancedGuidanceEngine
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -110,35 +112,20 @@ class MockPerceptionPipeline:
         return events
 
 class MockGuidanceEngine:
-    """Mock guidance engine that integrates Person 2's guidance system when available."""
+    """Enhanced guidance engine with comprehensive path analysis and walking directions."""
     
     def __init__(self):
         self.last_utterance = ""
         
-        # Use Person 2's guidance system if available
-        if GUIDANCE_AVAILABLE:
-            self.guidance_policy = GuidancePolicy()
-            logger.info("Initialized with Person 2's guidance system")
-        else:
-            self.guidance_policy = None
-            logger.info("Using fallback mock guidance")
+        # Initialize enhanced guidance system
+        self.enhanced_guidance = EnhancedGuidanceEngine()
+        logger.info("Initialized Enhanced Guidance Engine with Person 2 integration")
         
-    def step(self, frame_bgr, events, fps=None, mode="CPU", latency_ms=None):
-        """Generate guidance using Person 2's system or fallback mock."""
-        utterance = None
+    def step(self, frame_bgr, events, fps=None, mode="CPU", latency_ms=None, perception=None):
+        """Generate enhanced guidance with path analysis and walking directions."""
         
-        if self.guidance_policy:
-            # Use Person 2's smart guidance system
-            guidance_events = self._convert_events_for_guidance(events)
-            utterance = self.guidance_policy.choose(guidance_events)
-        else:
-            # Fallback mock guidance
-            if events:
-                event = events[0]  # Use first event
-                if event["type"] == "obstacle":
-                    utterance = "Obstacle detected ahead, please slow down"
-                elif event["type"] == "sign":
-                    utterance = f"Sign detected: {event['label']}"
+        # Use enhanced guidance system for comprehensive navigation
+        utterance = self.enhanced_guidance.get_guidance(events)
         
         if utterance:
             self.last_utterance = utterance
@@ -152,18 +139,43 @@ class MockGuidanceEngine:
         cv2.putText(frame_with_hud, f"Mode: {mode}", (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
         
+        # Enhanced guidance status
+        guidance_stats = self.enhanced_guidance.get_stats()
+        status_text = f"Enhanced Guidance: {'ON' if guidance_stats['person2_available'] else 'FALLBACK'}"
+        cv2.putText(frame_with_hud, status_text, (10, 90), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
         # Performance info
         perf_text = perf_line()
         cv2.putText(frame_with_hud, perf_text, (10, 60), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
-        # Event overlay
-        for i, event in enumerate(events):
-            bbox = event.get("bbox", [0, 0, 100, 100])
+        # Display nearby objects only (boundaries)
+        # Note: This uses display detections instead of all events for visual overlay
+        display_detections = []
+        if hasattr(perception, 'get_display_detections'):
+            display_detections = perception.get_display_detections(frame_bgr)
+        
+        # Draw boundaries only for nearby objects
+        for detection in display_detections:
+            bbox = detection.get('bbox', [0, 0, 100, 100])
+            label = detection.get('label', 'unknown')
+            conf = detection.get('conf', 0.0)
+            distance = detection.get('estimated_distance', 0.0)
+            
             x1, y1, x2, y2 = map(int, bbox)
-            cv2.rectangle(frame_with_hud, (x1, y1), (x2, y2), (0, 0, 255), 2)
-            cv2.putText(frame_with_hud, f"{event['label']} ({event['conf']:.2f})", 
-                       (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            
+            # Color code by distance
+            if distance <= 2.0:
+                color = (0, 0, 255)  # Red - very close
+            elif distance <= 4.0:
+                color = (0, 165, 255)  # Orange - close
+            else:
+                color = (0, 255, 255)  # Yellow - medium distance
+            
+            cv2.rectangle(frame_with_hud, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame_with_hud, f"{label} ({distance:.1f}m)", 
+                       (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
         
         # Controller state
         controller_state = get_controller_state()
@@ -178,39 +190,38 @@ class MockGuidanceEngine:
         self.last_utterance = utterance or ""
         return frame_with_hud, utterance
     
-    def _convert_events_for_guidance(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_events_for_guidance(self, events) -> List[Dict[str, Any]]:
         """Convert perception events to Person 2's guidance event format."""
         guidance_events = []
         
         for event in events:
-            event_type = event.get('type')
+            # Handle both Person 1's Event objects and mock dict events
+            if hasattr(event, 'type'):
+                # Person 1's Event object
+                event_type = event.type
+                intent = event.intent
+                conf = event.conf
+                bearing_deg = event.bearing_deg
+                dist_m = getattr(event, 'dist_m', None)
+            else:
+                # Mock dict event (fallback)
+                event_type = event.get('type')
+                intent = event.get('intent', 'OBSTACLE_PERSON')
+                conf = event.get('conf', 0.8)
+                bearing_deg = event.get('bearing_deg', event.get('bearing', 0.0))
+                dist_m = event.get('dist_m', event.get('distance', None))
             
-            if event_type == 'obstacle':
-                guidance_event = {
-                    'intent': 'OBSTACLE_PERSON',  # Default to person for now
-                    'conf': event.get('conf', 0.8),
-                    'bearing_deg': event.get('bearing', 0.0),
-                    'dist_m': event.get('distance', 2.0)
-                }
-                guidance_events.append(guidance_event)
-                
-            elif event_type == 'sign':
-                sign_label = event.get('label', '').upper()
-                if 'STOP' in sign_label:
-                    guidance_event = {
-                        'intent': 'STOP',
-                        'conf': event.get('conf', 0.9),
-                        'bearing_deg': event.get('bearing', 0.0)
-                    }
-                    guidance_events.append(guidance_event)
-                elif 'EXIT' in sign_label:
-                    direction = 'RIGHT' if 'RIGHT' in sign_label else 'LEFT'
-                    guidance_event = {
-                        'intent': f'EXIT_{direction}',
-                        'conf': event.get('conf', 0.8),
-                        'bearing_deg': event.get('bearing', 0.0)
-                    }
-                    guidance_events.append(guidance_event)
+            guidance_event = {
+                'intent': intent,
+                'conf': conf,
+                'bearing_deg': bearing_deg
+            }
+            
+            # Add distance for obstacles (especially people)
+            if dist_m is not None:
+                guidance_event['dist_m'] = dist_m
+            
+            guidance_events.append(guidance_event)
         
         return guidance_events
 
@@ -287,15 +298,23 @@ def main():
     
     # Initialize perception and guidance
     if PERCEPTION_AVAILABLE:
-        perception = PerceptionPipeline()
-        logger.info("Using real PerceptionPipeline")
+        # Use Person 1's real perception pipeline with original settings
+        config = PerceptionConfig(
+            yolo_conf_obstacle=0.6,  # Original confidence threshold
+            ocr_conf_text=0.8,       # High confidence for text detection
+            persist_frames=2,        # Original persistence setting
+            ocr_stride=5,            # Balanced OCR frequency
+            min_box_side=20          # Original minimum object size
+        )
+        perception = PerceptionPipeline(config)
+        logger.info("Using Person 1's real PerceptionPipeline with YOLO + OCR")
     else:
         perception = MockPerceptionPipeline()
         logger.info("Using mock PerceptionPipeline")
     
-    # Always use MockGuidanceEngine which now integrates Person 2's system
+    # Always use Enhanced Guidance Engine with comprehensive navigation
     guidance = MockGuidanceEngine()
-    logger.info("Using MockGuidanceEngine with Person 2 integration")
+    logger.info("Using Enhanced Guidance Engine with path analysis and walking directions")
     
     # Initialize Person 2's TTS system
     tts = None
@@ -383,7 +402,7 @@ def main():
             # Process with guidance
             with Timer("guidance"):
                 frame_with_hud, utterance = guidance.step(
-                    frame, events, fps, mode=actual_mode
+                    frame, events, fps, mode=actual_mode, perception=perception
                 )
             
             # Handle TTS (if not muted and utterance available)
