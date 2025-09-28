@@ -2,14 +2,6 @@
 Intelligent Voice Guidance System for Visual Accessibility
 *Princeton University · September 27-28, 2025*
 
-https://img.shields.io/badge/python-3.10%252B-blue
-https://img.shields.io/badge/opencv-4.8.0-green
-https://img.shields.io/badge/qualcomm-edge%2520ai-orange
-https://img.shields.io/badge/princeton-university-crimson
-https://img.shields.io/badge/license-MIT-lightgrey
-https://img.shields.io/badge/tests-23/23%2520passing-brightgreen
-https://img.shields.io/badge/coverage-100%2525%2520critical%2520paths-success
-
 🏆 Qualcomm Edge AI Developer Hackathon 2025
 Team VisionMate - *Princeton University, September 27-28, 2025*
 
