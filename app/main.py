@@ -26,13 +26,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from perception import PerceptionPipeline
-    from guidance import GuidanceEngine
     PERCEPTION_AVAILABLE = True
-    GUIDANCE_AVAILABLE = True
 except ImportError as e:
-    print(f"Warning: {e}. Running with mock modules for testing.")
+    print(f"Warning: {e}. Running with mock perception for testing.")
     PERCEPTION_AVAILABLE = False
-    GUIDANCE_AVAILABLE = False
 
 from app.perf import Timer, perf_line
 from app.ws_server import start_websocket_server_thread, get_controller_state
@@ -40,67 +37,111 @@ from app.phone_stream_server import start_phone_stream_server_thread, get_phone_
 from app.route_client import get_route, RouteClient
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Import Person 2's guidance system
+try:
+    from guidance import GuidancePolicy
+    from guidance.tts import TTS
+    GUIDANCE_AVAILABLE = True
+    TTS_AVAILABLE = True
+    logger.info("Using Person 2's guidance and TTS systems")
+except ImportError as e:
+    print(f"Warning: {e}. Running with mock guidance for testing.")
+    GUIDANCE_AVAILABLE = False
+    TTS_AVAILABLE = False
 
 class MockPerceptionPipeline:
     """Mock perception pipeline for testing when Person 1's module isn't available."""
     
     def __init__(self):
         self.frame_count = 0
+        # Define test scenarios for different signs and obstacles
+        self.test_scenarios = [
+            {"type": "sign", "label": "STOP", "intent": "STOP", "bearing": 0, "distance": 8.0},
+            {"type": "sign", "label": "EXIT RIGHT", "intent": "EXIT_RIGHT", "bearing": 20, "distance": 12.0},
+            {"type": "sign", "label": "EXIT LEFT", "intent": "EXIT_LEFT", "bearing": -25, "distance": 10.5},
+            {"type": "obstacle", "label": "person", "intent": "OBSTACLE_PERSON", "bearing": 5, "distance": 1.5},
+            {"type": "obstacle", "label": "person", "intent": "OBSTACLE_PERSON", "bearing": -10, "distance": 3.2},
+            {"type": "obstacle", "label": "person", "intent": "OBSTACLE_PERSON", "bearing": 0, "distance": 0.8},  # Very close
+            {"type": "obstacle", "label": "car", "intent": "OBSTACLE_CAR", "bearing": 15, "distance": 6.0},
+            {"type": "obstacle", "label": "pole", "intent": "OBSTACLE_POLE", "bearing": 2, "distance": 1.8},
+        ]
+        self.scenario_index = 0
         
     def process_frame(self, frame_bgr, fps=30) -> List[Dict[str, Any]]:
-        """Generate mock events for testing."""
+        """Generate mock events for testing with varied scenarios."""
         self.frame_count += 1
         
-        # Simulate occasional events
+        # Generate events every 60 frames (2 seconds at 30fps)
         events = []
-        if self.frame_count % 30 == 0:  # Every second
-            events.append({
-                "schema": "v1",
-                "ts": time.time(),
-                "type": "obstacle",
-                "label": "person",
-                "intent": "OBSTACLE_PERSON",
-                "conf": 0.85,
-                "bbox": [100, 100, 200, 300],
-                "bearing_deg": 5,
-                "dist_m": 3.2,
-                "sources": ["yolo"]
-            })
-        elif self.frame_count % 45 == 0:  # Every 1.5 seconds
-            events.append({
-                "schema": "v1", 
-                "ts": time.time(),
-                "type": "sign",
-                "label": "EXIT",
-                "intent": "EXIT_RIGHT",
-                "conf": 0.92,
-                "bbox": [300, 50, 400, 100],
-                "bearing_deg": 15,
-                "dist_m": 5.1,
-                "sources": ["ocr"]
-            })
+        if self.frame_count % 60 == 0:
+            scenario = self.test_scenarios[self.scenario_index % len(self.test_scenarios)]
+            self.scenario_index += 1
+            
+            if scenario["type"] == "sign":
+                events.append({
+                    "schema": "v1",
+                    "ts": time.time(),
+                    "type": "sign",
+                    "label": scenario["label"],
+                    "intent": scenario["intent"],
+                    "conf": 0.9,
+                    "bbox": [200, 50, 400, 120],
+                    "bearing_deg": scenario["bearing"],
+                    "dist_m": scenario["distance"],
+                    "sources": ["ocr"]
+                })
+            else:  # obstacle
+                events.append({
+                    "schema": "v1",
+                    "ts": time.time(),
+                    "type": "obstacle",
+                    "label": scenario["label"],
+                    "intent": scenario["intent"],
+                    "conf": 0.85,
+                    "bbox": [100, 100, 250, 350],
+                    "bearing_deg": scenario["bearing"],
+                    "dist_m": scenario["distance"],
+                    "sources": ["yolo"]
+                })
             
         return events
 
 class MockGuidanceEngine:
-    """Mock guidance engine for testing when Person 2's module isn't available."""
+    """Mock guidance engine that integrates Person 2's guidance system when available."""
     
     def __init__(self):
         self.last_utterance = ""
         
+        # Use Person 2's guidance system if available
+        if GUIDANCE_AVAILABLE:
+            self.guidance_policy = GuidancePolicy()
+            logger.info("Initialized with Person 2's guidance system")
+        else:
+            self.guidance_policy = None
+            logger.info("Using fallback mock guidance")
+        
     def step(self, frame_bgr, events, fps=None, mode="CPU", latency_ms=None):
-        """Generate mock guidance output."""
+        """Generate guidance using Person 2's system or fallback mock."""
         utterance = None
         
-        # Generate guidance based on events
-        if events:
-            event = events[0]  # Use first event
-            if event["type"] == "obstacle":
-                utterance = "Obstacle detected ahead, please slow down"
-            elif event["type"] == "sign":
-                utterance = f"Sign detected: {event['label']}"
+        if self.guidance_policy:
+            # Use Person 2's smart guidance system
+            guidance_events = self._convert_events_for_guidance(events)
+            utterance = self.guidance_policy.choose(guidance_events)
+        else:
+            # Fallback mock guidance
+            if events:
+                event = events[0]  # Use first event
+                if event["type"] == "obstacle":
+                    utterance = "Obstacle detected ahead, please slow down"
+                elif event["type"] == "sign":
+                    utterance = f"Sign detected: {event['label']}"
+        
+        if utterance:
+            self.last_utterance = utterance
         
         # Add HUD overlay
         frame_with_hud = frame_bgr.copy()
@@ -136,6 +177,42 @@ class MockGuidanceEngine:
         
         self.last_utterance = utterance or ""
         return frame_with_hud, utterance
+    
+    def _convert_events_for_guidance(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert perception events to Person 2's guidance event format."""
+        guidance_events = []
+        
+        for event in events:
+            event_type = event.get('type')
+            
+            if event_type == 'obstacle':
+                guidance_event = {
+                    'intent': 'OBSTACLE_PERSON',  # Default to person for now
+                    'conf': event.get('conf', 0.8),
+                    'bearing_deg': event.get('bearing', 0.0),
+                    'dist_m': event.get('distance', 2.0)
+                }
+                guidance_events.append(guidance_event)
+                
+            elif event_type == 'sign':
+                sign_label = event.get('label', '').upper()
+                if 'STOP' in sign_label:
+                    guidance_event = {
+                        'intent': 'STOP',
+                        'conf': event.get('conf', 0.9),
+                        'bearing_deg': event.get('bearing', 0.0)
+                    }
+                    guidance_events.append(guidance_event)
+                elif 'EXIT' in sign_label:
+                    direction = 'RIGHT' if 'RIGHT' in sign_label else 'LEFT'
+                    guidance_event = {
+                        'intent': f'EXIT_{direction}',
+                        'conf': event.get('conf', 0.8),
+                        'bearing_deg': event.get('bearing', 0.0)
+                    }
+                    guidance_events.append(guidance_event)
+        
+        return guidance_events
 
 def ep_providers(ep_flag: str) -> List:
     """
@@ -216,12 +293,19 @@ def main():
         perception = MockPerceptionPipeline()
         logger.info("Using mock PerceptionPipeline")
     
-    if GUIDANCE_AVAILABLE:
-        guidance = GuidanceEngine()
-        logger.info("Using real GuidanceEngine")
-    else:
-        guidance = MockGuidanceEngine()
-        logger.info("Using mock GuidanceEngine")
+    # Always use MockGuidanceEngine which now integrates Person 2's system
+    guidance = MockGuidanceEngine()
+    logger.info("Using MockGuidanceEngine with Person 2 integration")
+    
+    # Initialize Person 2's TTS system
+    tts = None
+    if TTS_AVAILABLE:
+        try:
+            tts = TTS()
+            logger.info("Initialized Person 2's TTS system")
+        except Exception as e:
+            logger.warning(f"Failed to initialize TTS: {e}")
+            tts = None
     
     # Initialize route client if specified
     route_client = None
@@ -269,9 +353,12 @@ def main():
                     if frame is None:
                         # No frame available yet, wait a bit
                         if frame_count % 100 == 0:  # Log every 100 attempts
-                            logger.info("Waiting for phone camera frames...")
+                            logger.info("⏳ Waiting for phone camera frames...")
                         time.sleep(0.033)  # ~30 FPS
                         continue
+                    else:
+                        if frame_count % 60 == 0:  # Log every 2 seconds at 30fps
+                            logger.info(f"📱 Received phone frame: {frame.shape}")
                     ret = True
                 else:
                     ret, frame = cap.read()
@@ -301,13 +388,30 @@ def main():
             
             # Handle TTS (if not muted and utterance available)
             if utterance and not controller_state.get("is_muted"):
-                # In real implementation, this would queue TTS
-                logger.info(f"TTS: {utterance}")
+                if tts:
+                    # Use Person 2's TTS system
+                    try:
+                        tts.say(utterance)
+                        logger.info(f"TTS: {utterance}")
+                    except Exception as e:
+                        logger.error(f"TTS error: {e}")
+                        logger.info(f"TTS (fallback): {utterance}")
+                else:
+                    # Fallback to logging
+                    logger.info(f"TTS: {utterance}")
             
             # Handle repeat command
             if controller_state.get("should_repeat") and hasattr(guidance, 'last_utterance'):
                 if guidance.last_utterance:
-                    logger.info(f"TTS Repeat: {guidance.last_utterance}")
+                    if tts:
+                        try:
+                            tts.say(guidance.last_utterance)
+                            logger.info(f"TTS Repeat: {guidance.last_utterance}")
+                        except Exception as e:
+                            logger.error(f"TTS repeat error: {e}")
+                            logger.info(f"TTS Repeat (fallback): {guidance.last_utterance}")
+                    else:
+                        logger.info(f"TTS Repeat: {guidance.last_utterance}")
                 controller_state["should_repeat"] = False  # Reset flag
             
             # Render frame

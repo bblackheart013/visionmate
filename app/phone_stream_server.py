@@ -34,35 +34,43 @@ class PhoneStreamReceiver:
     async def handle_phone_stream(self, websocket):
         """Handle incoming video stream from phone."""
         client_ip = websocket.remote_address[0]
-        logger.info(f"Phone camera stream connected from {client_ip}")
+        logger.info(f"📱 Phone camera stream connected from {client_ip}")
         
         with self.frame_lock:
             self.connection_count += 1
             self.is_streaming = True
+            logger.info(f"📊 Connection count: {self.connection_count}, Streaming: {self.is_streaming}")
         
         try:
             async for message in websocket:
                 try:
                     # Parse the incoming message
                     data = json.loads(message)
+                    logger.debug(f"📨 Received message type: {data.get('type', 'unknown')} from {client_ip}")
                     
                     if data.get("type") == "frame":
                         # Decode base64 frame
-                        frame_data = base64.b64decode(data["data"])
-                        nparr = np.frombuffer(frame_data, np.uint8)
-                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                        
-                        if frame is not None:
-                            with self.frame_lock:
-                                self.current_frame = frame
+                        try:
+                            frame_data = base64.b64decode(data["data"])
+                            nparr = np.frombuffer(frame_data, np.uint8)
+                            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             
-                            # Send acknowledgment back to phone
-                            response = {
-                                "type": "ack",
-                                "timestamp": time.time(),
-                                "frame_id": data.get("frame_id", 0)
-                            }
-                            await websocket.send(json.dumps(response))
+                            if frame is not None:
+                                with self.frame_lock:
+                                    self.current_frame = frame.copy()  # Store a copy to avoid race conditions
+                                    logger.info(f"Stored frame {data.get('frame_id', 0)}: {frame.shape}")
+                                
+                                # Send acknowledgment back to phone
+                                response = {
+                                    "type": "ack",
+                                    "timestamp": time.time(),
+                                    "frame_id": data.get("frame_id", 0)
+                                }
+                                await websocket.send(json.dumps(response))
+                            else:
+                                logger.warning("Failed to decode frame from phone")
+                        except Exception as e:
+                            logger.error(f"Error processing frame: {e}")
                     
                     elif data.get("type") == "ping":
                         # Respond to ping
@@ -86,7 +94,10 @@ class PhoneStreamReceiver:
     def get_current_frame(self) -> Optional[np.ndarray]:
         """Get the current frame from phone camera."""
         with self.frame_lock:
-            return self.current_frame.copy() if self.current_frame is not None else None
+            if self.current_frame is not None:
+                return self.current_frame.copy()
+            else:
+                return None
     
     def is_phone_streaming(self) -> bool:
         """Check if phone is currently streaming."""
@@ -140,7 +151,7 @@ class PhoneStreamReceiver:
         await server.wait_closed()
 
 # Global phone stream receiver
-_phone_stream = PhoneStreamReceiver()
+_phone_stream = PhoneStreamReceiver(8766)
 
 def get_phone_stream_receiver() -> PhoneStreamReceiver:
     """Get the global phone stream receiver."""
@@ -149,7 +160,7 @@ def get_phone_stream_receiver() -> PhoneStreamReceiver:
 async def start_phone_stream_server(port: int = 8766):
     """Start the phone stream server."""
     global _phone_stream
-    _phone_stream = PhoneStreamReceiver(port)
+    # Use the existing receiver instance (it should already have the correct port)
     await _phone_stream.start_server()
 
 def start_phone_stream_server_thread(port: int = 8766) -> threading.Thread:
