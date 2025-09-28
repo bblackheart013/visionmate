@@ -383,7 +383,7 @@ SOFTWARE.
 
 <div align="center">
 
-## 🎯 Built in 48 Hours at Princeton University
+## 🎯 Built in 24 Hours at Princeton University
 **Qualcomm Edge AI Developer Hackathon 2025 · September 27-28**
 
 *Transforming edge AI into compassionate accessibility solutions*
