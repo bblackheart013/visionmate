@@ -11,7 +11,7 @@ Orchestrating perception, voice, and vision into a unified accessibility experie
 🚀 30-Second Demo
 bash
 # Clone and run immediately
-git clone https://github.com/bblackheart013/signsense.git
+git clone https://github.com/bblackheart013/visionmate
 cd signsense
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
